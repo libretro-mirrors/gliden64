@@ -138,7 +138,7 @@ void OGLVideo::swapBuffers()
 
 void OGLVideo::setCaptureScreen(const char * const _strDirectory)
 {
-	m_strScreenDirectory = _strDirectory;
+	::mbstowcs(m_strScreenDirectory, _strDirectory, PLUGIN_PATH_SIZE-1);
 	m_bCaptureScreen = true;
 }
 
@@ -492,23 +492,22 @@ void _adjustScissorX(f32 & _X0, f32 & _X1, float _scale)
 	_X1 = (_X1 - halfX) * _scale + halfX;
 }
 
-void OGLRender::_updateScissor() const
+void OGLRender::updateScissor(FrameBuffer * _pBuffer) const
 {
 	OGLVideo & ogl = video();
 	f32 scaleX, scaleY;
 	u32 heightOffset, screenHeight;
-	FrameBuffer * pCurrentBuffer = frameBufferList().getCurrent();
-	if (pCurrentBuffer == NULL) {
+	if (_pBuffer == NULL) {
 		scaleX = ogl.getScaleX();
 		scaleY = ogl.getScaleY();
 		heightOffset = ogl.getHeightOffset();
 		screenHeight = VI.height;
 	}
 	else {
-		scaleX = pCurrentBuffer->m_scaleX;
-		scaleY = pCurrentBuffer->m_scaleY;
+		scaleX = _pBuffer->m_scaleX;
+		scaleY = _pBuffer->m_scaleY;
 		heightOffset = 0;
-		screenHeight = (pCurrentBuffer->m_height == 0) ? VI.height : pCurrentBuffer->m_height;
+		screenHeight = (_pBuffer->m_height == 0) ? VI.height : _pBuffer->m_height;
 	}
 
 	float SX0 = gDP.scissor.ulx;
@@ -589,7 +588,7 @@ void OGLRender::_updateStates(RENDER_STATE _renderState) const
 	}
 
 	if (gDP.changed & CHANGED_SCISSOR)
-		_updateScissor();
+		updateScissor(frameBufferList().getCurrent());
 
 	if (gSP.changed & CHANGED_VIEWPORT)
 		_updateViewport();
@@ -891,7 +890,8 @@ bool texturedRectDepthBufferCopy(const OGLRender::TexturedRectParams & _params)
 static
 bool texturedRectCopyToItself(const OGLRender::TexturedRectParams & _params)
 {
-	if (gSP.textureTile[0]->frameBuffer == frameBufferList().getCurrent())
+	FrameBuffer * pCurrent = frameBufferList().getCurrent();
+	if (pCurrent != NULL && pCurrent->m_size == G_IM_SIZ_8b && gSP.textureTile[0]->frameBuffer == pCurrent)
 		return true;
 	return texturedRectDepthBufferCopy(_params);
 }
@@ -1030,10 +1030,13 @@ void OGLRender::drawTexturedRect(const TexturedRectParams & _params)
 	} texST[2] = { { 0, 0, 0, 0 }, { 0, 0, 0, 0 } }; //struct for texture coordinates
 
 	if (currentCombiner()->usesT0() && cache.current[0] && gSP.textureTile[0]) {
-		texST[0].s0 = _params.uls * cache.current[0]->shiftScaleS - gSP.textureTile[0]->fuls;
-		texST[0].t0 = _params.ult * cache.current[0]->shiftScaleT - gSP.textureTile[0]->fult;
-		texST[0].s1 = (_params.lrs + 1.0f) * cache.current[0]->shiftScaleS - gSP.textureTile[0]->fuls;
-		texST[0].t1 = (_params.lrt + 1.0f) * cache.current[0]->shiftScaleT - gSP.textureTile[0]->fult;
+		f32 shiftScaleS = 1.0f;
+		f32 shiftScaleT = 1.0f;
+		getTextureShiftScale(0, cache, shiftScaleS, shiftScaleT);
+		texST[0].s0 = _params.uls * shiftScaleS - gSP.textureTile[0]->fuls;
+		texST[0].t0 = _params.ult * shiftScaleT - gSP.textureTile[0]->fult;
+		texST[0].s1 = (_params.lrs + 1.0f) * shiftScaleS - gSP.textureTile[0]->fuls;
+		texST[0].t1 = (_params.lrt + 1.0f) * shiftScaleT - gSP.textureTile[0]->fult;
 
 		if (cache.current[0]->frameBufferTexture) {
 			texST[0].s0 = cache.current[0]->offsetS + texST[0].s0;
@@ -1057,10 +1060,13 @@ void OGLRender::drawTexturedRect(const TexturedRectParams & _params)
 	}
 
 	if (currentCombiner()->usesT1() && cache.current[1] && gSP.textureTile[1]) {
-		texST[1].s0 = _params.uls * cache.current[1]->shiftScaleS - gSP.textureTile[1]->fuls;
-		texST[1].t0 = _params.ult * cache.current[1]->shiftScaleT - gSP.textureTile[1]->fult;
-		texST[1].s1 = (_params.lrs + 1.0f) * cache.current[1]->shiftScaleS - gSP.textureTile[1]->fuls;
-		texST[1].t1 = (_params.lrt + 1.0f) * cache.current[1]->shiftScaleT - gSP.textureTile[1]->fult;
+		f32 shiftScaleS = 1.0f;
+		f32 shiftScaleT = 1.0f;
+		getTextureShiftScale(1, cache, shiftScaleS, shiftScaleT);
+		texST[1].s0 = _params.uls * shiftScaleS - gSP.textureTile[1]->fuls;
+		texST[1].t0 = _params.ult * shiftScaleT - gSP.textureTile[1]->fult;
+		texST[1].s1 = (_params.lrs + 1.0f) * shiftScaleS - gSP.textureTile[1]->fuls;
+		texST[1].t1 = (_params.lrt + 1.0f) * shiftScaleT - gSP.textureTile[1]->fult;
 
 		if (cache.current[1]->frameBufferTexture) {
 			texST[1].s0 = cache.current[1]->offsetS + texST[1].s0;
@@ -1137,12 +1143,12 @@ void OGLRender::drawText(const char *_pText, float x, float y)
 	TextDrawer::get().renderText(_pText, x, y);
 }
 
-void OGLRender::clearDepthBuffer(bool _fullsize)
+void OGLRender::clearDepthBuffer(u32 _uly, u32 _lry)
 {
 	if (config.frameBufferEmulation.enable && frameBufferList().getCurrent() == NULL)
 		return;
 
-	depthBufferList().clearBuffer(_fullsize);
+	depthBufferList().clearBuffer(_uly, _lry);
 
 	glDisable( GL_SCISSOR_TEST );
 	glDepthMask( TRUE );

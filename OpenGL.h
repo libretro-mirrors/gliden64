@@ -59,7 +59,7 @@ public:
 	};
 	void drawTexturedRect(const TexturedRectParams & _params);
 	void drawText(const char *_pText, float x, float y);
-	void clearDepthBuffer(bool _fullsize);
+	void clearDepthBuffer(u32 _uly, u32 _lry);
 	void clearColorBuffer( float * _pColor );
 
 	int getTrianglesCount() const {return triangles.num;}
@@ -71,6 +71,7 @@ public:
 	SPVertex & getVertex(u32 _v) {return triangles.vertices[_v];}
 	void setDMAVerticesSize(u32 _size) { if (triangles.dmaVertices.size() < _size) triangles.dmaVertices.resize(_size); }
 	SPVertex * getDMAVerticesData() { return triangles.dmaVertices.data(); }
+	void updateScissor(FrameBuffer * _pBuffer) const;
 
 	enum RENDER_STATE {
 		rsNone = 0,
@@ -100,7 +101,6 @@ private:
 	void _setBlendMode() const;
 	void _updateCullFace() const;
 	void _updateViewport() const;
-	void _updateScissor() const;
 	void _updateDepthUpdate() const;
 	void _updateStates(RENDER_STATE _renderState) const;
 	void _prepareDrawTriangle(bool _dma);
@@ -165,7 +165,7 @@ protected:
 		m_bCaptureScreen(false), m_bToggleFullscreen(false), m_bResizeWindow(false), m_bFullscreen(false), m_bAdjustScreen(false),
 		m_width(0), m_height(0), m_heightOffset(0),
 		m_screenWidth(0), m_screenHeight(0), m_resizeWidth(0), m_resizeHeight(0),
-		m_scaleX(0), m_scaleY(0), m_adjustScale(0), m_strScreenDirectory(NULL)
+		m_scaleX(0), m_scaleY(0), m_adjustScale(0)
 	{}
 
 	void _setBufferSize();
@@ -182,7 +182,7 @@ protected:
 	f32 m_scaleX, m_scaleY;
 	f32 m_adjustScale;
 
-	const char * m_strScreenDirectory;
+	wchar_t m_strScreenDirectory[PLUGIN_PATH_SIZE];
 
 private:
 	OGLRender m_render;

@@ -97,9 +97,9 @@ DepthBufferToRDRAM g_dbToRDRAM;
 #endif
 RDRAMtoFrameBuffer g_RDRAMtoFB;
 
-FrameBuffer::FrameBuffer() : m_RdramCrc(0), m_validityChecked(0), m_cleared(false), m_changed(false), m_isDepthBuffer(false),
-	m_needHeightCorrection(false), m_pLoadTile(NULL), m_pDepthBuffer(NULL),
-	m_pResolveTexture(NULL), m_resolveFBO(0), m_resolved(false)
+FrameBuffer::FrameBuffer() : m_validityChecked(0), m_cleared(false), m_changed(false), m_isDepthBuffer(false),
+	m_needHeightCorrection(false), m_postProcessed(false), m_pLoadTile(NULL), m_pDepthBuffer(NULL),
+	m_pResolveTexture(NULL), m_resolveFBO(0), m_copiedToRdram(false), m_resolved(false)
 {
 	m_pTexture = textureCache().addFrameBufferTexture();
 	glGenFramebuffers(1, &m_FBO);
@@ -109,9 +109,9 @@ FrameBuffer::FrameBuffer(FrameBuffer && _other) :
 	m_startAddress(_other.m_startAddress), m_endAddress(_other.m_endAddress),
 	m_size(_other.m_size), m_width(_other.m_width), m_height(_other.m_height), m_fillcolor(_other.m_fillcolor),
 	m_scaleX(_other.m_scaleX), m_scaleY(_other.m_scaleY), m_cleared(_other.m_cleared), m_changed(_other.m_changed), m_cfb(_other.m_cfb), m_isDepthBuffer(_other.m_isDepthBuffer),
-	m_RdramCrc(_other.m_RdramCrc), m_needHeightCorrection(_other.m_needHeightCorrection), m_validityChecked(_other.m_validityChecked),
+	m_copiedToRdram(_other.m_copiedToRdram), m_needHeightCorrection(_other.m_needHeightCorrection), m_postProcessed(_other.m_postProcessed), m_validityChecked(_other.m_validityChecked),
 	m_FBO(_other.m_FBO), m_pLoadTile(_other.m_pLoadTile), m_pTexture(_other.m_pTexture), m_pDepthBuffer(_other.m_pDepthBuffer),
-	m_pResolveTexture(_other.m_pResolveTexture), m_resolveFBO(_other.m_resolveFBO), m_resolved(_other.m_resolved)
+	m_pResolveTexture(_other.m_pResolveTexture), m_resolveFBO(_other.m_resolveFBO), m_resolved(_other.m_resolved), m_RdramCopy(_other.m_RdramCopy)
 {
 	_other.m_FBO = 0;
 	_other.m_pTexture = NULL;
@@ -119,6 +119,7 @@ FrameBuffer::FrameBuffer(FrameBuffer && _other) :
 	_other.m_pDepthBuffer = NULL;
 	_other.m_pResolveTexture = NULL;
 	_other.m_resolveFBO = 0;
+	_other.m_RdramCopy.clear();
 }
 
 
@@ -223,6 +224,75 @@ void FrameBuffer::reinit(u16 _height)
 	init(m_startAddress, endAddress, format, m_size, m_width, _height, m_cfb);
 }
 
+inline
+u32 _cutHeight(u32 _address, u32 _height, u32 _stride)
+{
+	if (_address + _stride * _height > RDRAMSize)
+		_height = (RDRAMSize - _address) / _stride;
+	return _height;
+}
+
+void FrameBuffer::copyRdram()
+{
+	const u32 stride = m_width << m_size >> 1;
+	const u32 height = _cutHeight(m_startAddress, m_height, stride);
+	const u32 dataSize = stride * height;
+
+	// Auxiliary frame buffer
+	if (m_width != VI.width) {
+		if (config.frameBufferEmulation.validityCheckMethod == Config::vcFill) {
+			gDPFillRDRAM(m_startAddress, 0, 0, m_width, height, m_width, m_size, m_fillcolor, false);
+			return;
+		}
+		if (config.frameBufferEmulation.validityCheckMethod == Config::vcFingerprint) {
+			// Write small amount of data to the start of the buffer.
+			// This is necessary for auxilary buffers: game can restore content of RDRAM when buffer is not needed anymore
+			// Thus content of RDRAM on moment of buffer creation will be the same as when buffer becomes obsolete.
+			// Validity check will see that the RDRAM is the same and thus the buffer is valid, which is false.
+			// It can be enough to write data just little more than treshold level, but more safe to write twice as much in case that some values in buffer match our fingerprint.
+			const u32 twoPercent = dataSize / 200;
+			u32 start = m_startAddress >> 2;
+			u32 * pData = (u32*)RDRAM;
+			for (u32 i = 0; i < twoPercent; ++i)
+				pData[start++] = m_startAddress;
+		}
+	}
+
+	m_RdramCopy.resize(dataSize);
+	memcpy(m_RdramCopy.data(), RDRAM + m_startAddress, dataSize);
+}
+
+bool FrameBuffer::isValid() const
+{
+	if (m_validityChecked == RSP.DList)
+		return true; // Already checked
+
+	const u32 * const pData = (const u32*)RDRAM;
+
+	if (m_cleared) {
+		const u32 color = m_fillcolor & 0xFFFEFFFE;
+		const u32 start = m_startAddress >> 2;
+		const u32 end = m_endAddress >> 2;
+		u32 wrongPixels = 0;
+		for (u32 i = start; i < end; ++i) {
+			if ((pData[i] & 0xFFFEFFFE) != color)
+				++wrongPixels;
+		}
+		return wrongPixels < (m_endAddress - m_startAddress) / 400; // treshold level 1% of dwords
+	} else if (!m_RdramCopy.empty()) {
+		const u32 * const pCopy = (const u32*)m_RdramCopy.data();
+		const u32 size = m_RdramCopy.size();
+		const u32 size_dwords = size >> 2;
+		u32 start = m_startAddress >> 2;
+		u32 wrongPixels = 0;
+		for (u32 i = 0; i < size_dwords; ++i) {
+			if ((pData[start++] & 0xFFFEFFFE) != (pCopy[i] & 0xFFFEFFFE))
+				++wrongPixels;
+		}
+		return wrongPixels < size / 400; // treshold level 1% of dwords
+	}
+	return true; // No data to decide
+}
 
 void FrameBuffer::resolveMultisampledTexture()
 {
@@ -275,13 +345,20 @@ void FrameBufferList::setBufferChanged()
 	gDP.colorImage.changed = TRUE;
 	if (m_pCurrent != NULL) {
 		m_pCurrent->m_changed = true;
-		m_pCurrent->m_RdramCrc = m_pCurrent->m_validityChecked = 0;
+		m_pCurrent->m_copiedToRdram = false;
+		m_pCurrent->m_validityChecked = 0;
 	}
 }
 
 bool FrameBufferList::_isMarioTennisScoreboard()
 {
-	return (config.generalEmulation.hacks&hack_scoreboard) != 0 && m_pCurrent != NULL && (m_pCurrent->m_startAddress == 0x13ba50 || m_pCurrent->m_startAddress == 0x264430);
+	if ((config.generalEmulation.hacks&hack_scoreboard) != 0) {
+		if (VI.PAL)
+			return m_pCurrent != NULL && (m_pCurrent->m_startAddress == 0x13b480 || m_pCurrent->m_startAddress == 0x26a530);
+		else
+			return m_pCurrent != NULL && (m_pCurrent->m_startAddress == 0x13ba50 || m_pCurrent->m_startAddress == 0x264430);
+	}
+	return (config.generalEmulation.hacks&hack_scoreboardJ) != 0 && m_pCurrent != NULL && (m_pCurrent->m_startAddress == 0x134080 || m_pCurrent->m_startAddress == 0x1332f8);
 }
 
 void FrameBufferList::correctHeight()
@@ -352,33 +429,19 @@ FrameBuffer * FrameBufferList::findTmpBuffer(u32 _address)
 	return NULL;
 }
 
-static
-u32 _cutHeight(u32 _address, u32 _height, u32 _stride)
-{
-	if (_address + _stride * _height > RDRAMSize)
-		_height = (RDRAMSize - _address) / _stride;
-	return _height;
-}
-
 void FrameBufferList::saveBuffer(u32 _address, u16 _format, u16 _size, u16 _width, u16 _height, bool _cfb)
 {
 	if (VI.width == 0 || _height == 0)
 		return;
 
-	const bool bMarioTennisScoreboard = _isMarioTennisScoreboard();
 	OGLVideo & ogl = video();
 	if (m_pCurrent != NULL) {
 		if (gDP.colorImage.height > 0) {
 			if (m_pCurrent->m_width == VI.width)
 				gDP.colorImage.height = min(gDP.colorImage.height, VI.height);
 			m_pCurrent->m_endAddress = min(RDRAMSize, m_pCurrent->m_startAddress + (((m_pCurrent->m_width * gDP.colorImage.height) << m_pCurrent->m_size >> 1) - 1));
-			if (!config.frameBufferEmulation.copyFromRDRAM && !bMarioTennisScoreboard && !m_pCurrent->m_isDepthBuffer && m_pCurrent->m_RdramCrc == 0 && !m_pCurrent->m_cfb && !m_pCurrent->m_cleared && gDP.colorImage.height > 1) {
-				if (config.frameBufferEmulation.validityCheckMethod == 0) {
-					const u32 stride = m_pCurrent->m_width << m_pCurrent->m_size >> 1;
-					m_pCurrent->m_RdramCrc = textureCRC(RDRAM + m_pCurrent->m_startAddress, _cutHeight(m_pCurrent->m_startAddress, m_pCurrent->m_height, stride), stride);
-				}
-				else
-					gDPFillRDRAM(m_pCurrent->m_startAddress, 0, 0, m_pCurrent->m_width, gDP.colorImage.height, m_pCurrent->m_width, m_pCurrent->m_size, m_pCurrent->m_fillcolor, false);
+			if (!config.frameBufferEmulation.copyFromRDRAM && !_isMarioTennisScoreboard() && !m_pCurrent->m_isDepthBuffer && !m_pCurrent->m_copiedToRdram && !m_pCurrent->m_cfb && !m_pCurrent->m_cleared && m_pCurrent->m_RdramCopy.empty() && gDP.colorImage.height > 1) {
+				m_pCurrent->copyRdram();
 			}
 		}
 		m_pCurrent = _findBuffer(m_pCurrent->m_startAddress, m_pCurrent->m_endAddress, m_pCurrent->m_width);
@@ -411,8 +474,8 @@ void FrameBufferList::saveBuffer(u32 _address, u16 _format, u16 _size, u16 _widt
 					m_pCurrent->m_pResolveTexture->format = _format;
 					m_pCurrent->m_pResolveTexture->size = _size;
 				}
-				if (m_pCurrent->m_RdramCrc != 0)
-					m_pCurrent->m_RdramCrc = textureCRC(RDRAM + m_pCurrent->m_startAddress, m_pCurrent->m_height, m_pCurrent->m_width << m_pCurrent->m_size >> 1);
+				if (m_pCurrent->m_copiedToRdram)
+					m_pCurrent->copyRdram();
 			}
 		}
 	}
@@ -423,6 +486,9 @@ void FrameBufferList::saveBuffer(u32 _address, u16 _format, u16 _size, u16 _widt
 		FrameBuffer & buffer = m_list.front();
 		buffer.init(_address, endAddress, _format, _size, _width, _height, _cfb);
 		m_pCurrent = &buffer;
+
+		if (_isMarioTennisScoreboard() || ((config.generalEmulation.hacks & hack_legoRacers) != 0 && _width == VI.width))
+			g_RDRAMtoFB.CopyFromRDRAM(m_pCurrent->m_startAddress + 4, false);
 	}
 
 	if (_address == gDP.depthImageAddress)
@@ -436,11 +502,9 @@ void FrameBufferList::saveBuffer(u32 _address, u16 _format, u16 _size, u16 _widt
 	);
 #endif
 
-	if (bMarioTennisScoreboard || ((config.generalEmulation.hacks & hack_legoRacers) != 0 && bNew && _width == VI.width))
-		g_RDRAMtoFB.CopyFromRDRAM(m_pCurrent->m_startAddress + 4, false);
-
 	m_pCurrent->m_isDepthBuffer = _address == gDP.depthImageAddress;
 	m_pCurrent->m_isPauseScreen = m_pCurrent->m_isOBScreen = false;
+	m_pCurrent->m_postProcessed = false;
 
 	gSP.changed |= CHANGED_TEXTURE;
 }
@@ -597,6 +661,7 @@ void FrameBufferList::renderBuffer(u32 _address)
 	}
 	GLint dstCoord[4] = { X0 + hOffset, vOffset + (GLint)(dstY0*dstScaleY), hOffset + X1, vOffset + (GLint)(dstY1*dstScaleY) };
 
+	ogl.getRender().updateScissor(pBuffer);
 	PostProcessor::get().process(pBuffer);
 	// glDisable(GL_SCISSOR_TEST) does not affect glBlitFramebuffer, at least on AMD
 	glScissor(0, 0, ogl.getScreenWidth(), ogl.getScreenHeight() + ogl.getHeightOffset());
@@ -830,7 +895,8 @@ void FrameBufferToRDRAM::_copyWhite(FrameBuffer * _pBuffer)
 			}
 		}
 	}
-	_pBuffer->m_RdramCrc = textureCRC(RDRAM + _pBuffer->m_startAddress, _pBuffer->m_height, _pBuffer->m_width << _pBuffer->m_size >> 1);
+	_pBuffer->m_copiedToRdram = true;
+	_pBuffer->copyRdram();
 
 	_pBuffer->m_cleared = false;
 }
@@ -903,7 +969,8 @@ void FrameBufferToRDRAM::CopyToRDRAM(u32 _address)
 			}
 		}
 	}
-	pBuffer->m_RdramCrc = textureCRC(RDRAM + _address, height, stride);
+	pBuffer->m_copiedToRdram = true;
+	pBuffer->copyRdram();
 	pBuffer->m_cleared = false;
 #ifndef GLES2
 	glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
@@ -1041,9 +1108,9 @@ bool DepthBufferToRDRAM::CopyToRDRAM( u32 _address) {
 	f32 * ptr_src = (f32*)pixelData;
 	u16 *ptr_dst = (u16*)(RDRAM + address);
 	const u16 * const zLUT = depthBufferList().getZLUT();
-	const u32 height = _cutHeight(address, VI.height, pBuffer->m_width * 2);
+	const u32 height = _cutHeight(address, min(VI.height, pDepthBuffer->m_lry), pBuffer->m_width * 2);
 
-	for (u32 y = 0; y < height; ++y) {
+	for (u32 y = pDepthBuffer->m_uly; y < height; ++y) {
 		for (u32 x = 0; x < VI.width; ++x) {
 			f32 z = ptr_src[x + (height - y - 1)*VI.width];
 			u32 idx = 0x3FFFF;

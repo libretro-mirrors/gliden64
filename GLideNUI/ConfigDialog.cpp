@@ -1,3 +1,4 @@
+#include <QDir>
 #include <QFileDialog>
 #include <QFontDialog>
 #include <QColorDialog>
@@ -132,11 +133,11 @@ void ConfigDialog::_init()
 		break;
 	}
 	switch (config.frameBufferEmulation.validityCheckMethod) {
-	case 0:
-		ui->checksumRadioButton->setChecked(true);
+	case Config::vcFill:
+		ui->validityMethodFillRadioButton->setChecked(true);
 		break;
-	case 1:
-		ui->fillRdramRadioButton->setChecked(true);
+	case Config::vcFingerprint:
+		ui->validityMethodFingerprintRadioButton->setChecked(true);
 		break;
 	}
 
@@ -199,6 +200,41 @@ void ConfigDialog::_init()
 	ui->blurStrengthSlider->setValue(config.bloomFilter.blurStrength);
 }
 
+void ConfigDialog::_getTranslations(QStringList & _translationFiles) const
+{
+	QDir pluginFolder(m_strIniPath);
+	QStringList nameFilters("gliden64_*.qm");
+	_translationFiles = pluginFolder.entryList(nameFilters, QDir::Files, QDir::Name);
+}
+
+
+void ConfigDialog::setIniPath(const QString & _strIniPath)
+{
+	m_strIniPath = _strIniPath;
+
+	QStringList translationFiles;
+	_getTranslations(translationFiles);
+
+	const QString currentTranslation = getTranslationFile();
+	int listIndex = 0;
+	QStringList translationLanguages("English");
+	for (int i = 0; i < translationFiles.size(); ++i) {
+		// get locale extracted by filename
+		QString locale = translationFiles[i]; // "TranslationExample_de.qm"
+		const bool bCurrent = locale == currentTranslation;
+		locale.truncate(locale.lastIndexOf('.')); // "TranslationExample_de"
+		locale.remove(0, locale.indexOf('_') + 1); // "de"
+		QString language = QLocale::languageToString(QLocale(locale).language());
+		if (bCurrent) {
+			listIndex = i + 1;
+		}
+		translationLanguages << language;
+	}
+
+	ui->translationsComboBox->insertItems(0, translationLanguages);
+	ui->translationsComboBox->setCurrentIndex(listIndex);
+}
+
 ConfigDialog::ConfigDialog(QWidget *parent) :
 QDialog(parent),
 ui(new Ui::ConfigDialog),
@@ -237,6 +273,15 @@ void ConfigDialog::accept()
 	else if (ui->jpegRadioButton->isChecked())
 		config.texture.screenShotFormat = 1;
 
+	const int lanuageIndex = ui->translationsComboBox->currentIndex();
+	if (lanuageIndex == 0) // English
+		config.translationFile.clear();
+	else {
+		QStringList translationFiles;
+		_getTranslations(translationFiles);
+		config.translationFile = translationFiles[lanuageIndex-1].toLocal8Bit().constData();
+	}
+
 	// Emulation settings
 	config.generalEmulation.enableLOD = ui->emulateLodCheckBox->isChecked() ? 1 : 0;
 	config.generalEmulation.enableNoise = ui->emulateNoiseCheckBox->isChecked() ? 1 : 0;
@@ -259,10 +304,10 @@ void ConfigDialog::accept()
 	else if (ui->aspectAdjustRadioButton->isChecked())
 		config.frameBufferEmulation.aspect = Config::aAdjust;
 
-	if (ui->checksumRadioButton->isChecked())
-		config.frameBufferEmulation.validityCheckMethod = 0;
-	else if (ui->fillRdramRadioButton->isChecked())
-		config.frameBufferEmulation.validityCheckMethod = 1;
+	if (ui->validityMethodFillRadioButton->isChecked())
+		config.frameBufferEmulation.validityCheckMethod = Config::vcFill;
+	else if (ui->validityMethodFingerprintRadioButton->isChecked())
+		config.frameBufferEmulation.validityCheckMethod = Config::vcFingerprint;
 
 	// Texture filter settings
 	config.textureFilter.txFilterMode = ui->filterComboBox->currentIndex();

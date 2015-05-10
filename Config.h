@@ -18,6 +18,8 @@ struct Config
 {
 	u32 version;
 
+	std::string translationFile;
+
 	struct
 	{
 		u32 fullscreen;
@@ -53,6 +55,12 @@ struct Config
 		aTotal = 4
 	};
 
+	enum ValidityCheckMethod {
+		vcFingerprint = 0,
+		vcFill = 1,
+		vcTotal = 2
+	};
+
 	struct {
 		u32 enable;
 		u32 copyToRDRAM;
@@ -61,7 +69,7 @@ struct Config
 		u32 detectCFB;
 		u32 N64DepthCompare;
 		u32 aspect; // 0: stretch ; 1: 4/3 ; 2: 16/9; 3: adjust
-		u32 validityCheckMethod; // 0: checksum; 1: fill RDRAM
+		u32 validityCheckMethod; // 0=write fingerprint to the buffer, 1=fill whole buffer in RDRAM with test value
 	} frameBufferEmulation;
 
 	struct
@@ -106,10 +114,11 @@ struct Config
 #define hack_noDepthFrameBuffers	(1<<1)  //Do not use depth buffers as texture
 #define hack_blurPauseScreen		(1<<2)  //Game copies frame buffer to depth buffer area, CPU blurs it. That image is used as background for pause screen.
 #define hack_scoreboard				(1<<3)  //Copy data from RDRAM to auxilary frame buffer. Scoreboard in Mario Tennis.
-#define hack_pilotWings				(1<<4)  //Special blend mode for PilotWings.
-#define hack_subscreen				(1<<5)  //Fix subscreen delay in Zelda OOT
-#define hack_legoRacers				(1<<6)  //LEGO racers course map
-#define hack_blastCorps				(1<<7)  //Blast Corps black polygons
+#define hack_scoreboardJ			(1<<4)  //Copy data from RDRAM to auxilary frame buffer. Scoreboard in Mario Tennis (J).
+#define hack_pilotWings				(1<<5)  //Special blend mode for PilotWings.
+#define hack_subscreen				(1<<6)  //Fix subscreen delay in Zelda OOT
+#define hack_legoRacers				(1<<7)  //LEGO racers course map
+#define hack_blastCorps				(1<<8)  //Blast Corps black polygons
 
 extern Config config;
 

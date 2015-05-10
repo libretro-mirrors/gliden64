@@ -515,7 +515,7 @@ ShaderCombiner::ShaderCombiner(Combiner & _color, Combiner & _alpha, const gDPCo
 		strFragmentShader.append(fragment_shader_header_common_functions_notex);
 	}
 	strFragmentShader.append(fragment_shader_header_main);
-	const bool bUseLod = (m_nInputs & (1<<LOD_FRACTION)) > 0;
+	const bool bUseLod = usesLOD();
 	if (bUseLod) {
 		strFragmentShader.append("  lowp vec4 readtex0, readtex1; \n");
 		strFragmentShader.append("  lowp float lod_frac = mipmap(readtex0, readtex1);	\n");
@@ -719,7 +719,7 @@ void ShaderCombiner::updateGammaCorrection(bool _bForce)
 void ShaderCombiner::updateFogMode(bool _bForce)
 {
 	const u32 blender = (gDP.otherMode.l >> 16);
-	const int nFogBlendEnabled = config.generalEmulation.enableFog != 0 && gSP.fog.multiplier > 0 && (gDP.otherMode.c1_m1a == 3 || gDP.otherMode.c1_m2a == 3 || gDP.otherMode.c2_m1a == 3 || gDP.otherMode.c2_m2a == 3) ? 256 : 0;
+	const int nFogBlendEnabled = config.generalEmulation.enableFog != 0 && gSP.fog.multiplier >= 0 && (gDP.otherMode.c1_m1a == 3 || gDP.otherMode.c1_m2a == 3 || gDP.otherMode.c2_m1a == 3 || gDP.otherMode.c2_m2a == 3) ? 256 : 0;
 	int nFogUsage = ((gSP.geometryMode & G_FOG) != 0) ? 1 : 0;
 	int nSpecialBlendMode = 0;
 	switch (blender) {
@@ -1136,8 +1136,12 @@ void UniformBlock::updateTextureParameters()
 		texCacheScale[1] = cache.current[0]->scaleT;
 		texCacheOffset[0] = cache.current[0]->offsetS;
 		texCacheOffset[1] = cache.current[0]->offsetT;
-		texCacheShiftScale[0] = cache.current[0]->shiftScaleS;
-		texCacheShiftScale[1] = cache.current[0]->shiftScaleT;
+
+		f32 shiftScaleS = 1.0f;
+		f32 shiftScaleT = 1.0f;
+		getTextureShiftScale(0, cache, shiftScaleS, shiftScaleT);
+		texCacheShiftScale[0] = shiftScaleS;
+		texCacheShiftScale[1] = shiftScaleT;
 		texCacheFrameBuffer[0] = cache.current[0]->frameBufferTexture;
 	}
 	if (cache.current[1]) {
@@ -1145,8 +1149,12 @@ void UniformBlock::updateTextureParameters()
 		texCacheScale[5] = cache.current[1]->scaleT;
 		texCacheOffset[4] = cache.current[1]->offsetS;
 		texCacheOffset[5] = cache.current[1]->offsetT;
-		texCacheShiftScale[4] = cache.current[1]->shiftScaleS;
-		texCacheShiftScale[5] = cache.current[1]->shiftScaleT;
+
+		f32 shiftScaleS = 1.0f;
+		f32 shiftScaleT = 1.0f;
+		getTextureShiftScale(1, cache, shiftScaleS, shiftScaleT);
+		texCacheShiftScale[4] = shiftScaleS;
+		texCacheShiftScale[5] = shiftScaleT;
 		texCacheFrameBuffer[1] = cache.current[1]->frameBufferTexture;
 	}
 	memcpy(pData + m_textureBlock.m_offsets[tuCacheScale], texCacheScale, m_textureBlock.m_offsets[tuCacheOffset] - m_textureBlock.m_offsets[tuCacheScale]);

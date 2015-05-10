@@ -137,6 +137,11 @@ void RSP_CheckDLCounter()
 
 void RSP_ProcessDList()
 {
+	if (ÑonfigOpen) {
+		gDPFullSync();
+		return;
+	}
+
 	RSP.PC[0] = *(u32*)&DMEM[0x0FF0];
 	RSP.PCi = 0;
 	RSP.count = -1;
@@ -309,6 +314,8 @@ void RSP_Init()
 		strstr(RSP.romname, (const char *)"MICKEY USA") != NULL
 		)
 		config.generalEmulation.hacks |= hack_blurPauseScreen;
+	else if (strstr(RSP.romname, (const char *)"MarioTennis64") != NULL)
+		config.generalEmulation.hacks |= hack_scoreboardJ;
 	else if (strstr(RSP.romname, (const char *)"MarioTennis") != NULL)
 		config.generalEmulation.hacks |= hack_scoreboard;
 	else if (strstr(RSP.romname, (const char *)"Pilot Wings64") != NULL)
