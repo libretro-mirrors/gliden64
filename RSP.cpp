@@ -137,7 +137,7 @@ void RSP_CheckDLCounter()
 
 void RSP_ProcessDList()
 {
-	if (ÑonfigOpen) {
+	if (ConfigOpen) {
 		gDPFullSync();
 		return;
 	}
@@ -281,7 +281,7 @@ void RSP_Init()
 	else
 		RDRAMSize = 0x3FFFFF;
 #else // OS_WINDOWS
-	RDRAMSize = 1024 * 1024 * 8;
+	RDRAMSize = 1024 * 1024 * 8 - 1;
 #endif // OS_WINDOWS
 
 	RSP.DList = 0;

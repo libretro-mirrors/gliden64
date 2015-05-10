@@ -10,4 +10,4 @@ u32 RDRAMSize;
 
 N64Regs REG;
 
-bool ÑonfigOpen = false;
+bool ConfigOpen = false;

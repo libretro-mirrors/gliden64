@@ -13,13 +13,13 @@ void Config_DoConfig(/*HWND hParent*/)
 	wchar_t strIniFolderPath[PLUGIN_PATH_SIZE];
 	api().FindPluginPath(strIniFolderPath);
 
-	ÑonfigOpen = true;
+	ConfigOpen = true;
 	const bool bRestart = RunConfig(strIniFolderPath);
 	if (config.generalEmulation.enableCustomSettings != 0)
 		LoadCustomRomSettings(strIniFolderPath, RSP.romname);
 	if (bRestart)
 		video().restart();
-	ÑonfigOpen = false;
+	ConfigOpen = false;
 }
 
 void Config_LoadConfig()
